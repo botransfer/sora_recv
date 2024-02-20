@@ -20,7 +20,8 @@ list(APPEND CMAKE_MODULE_PATH ${SORA_DIR}/share/cmake)
 
 set(Boost_USE_STATIC_LIBS ON)
 
-find_package(Boost REQUIRED COMPONENTS json)
+find_package(Boost REQUIRED COMPONENTS json filesystem)
+find_package(Lyra REQUIRED)
 find_package(WebRTC REQUIRED)
 find_package(Sora REQUIRED)
 #find_package(SDL2 REQUIRED)
@@ -29,7 +30,7 @@ find_package(Libva REQUIRED)
 find_package(Libdrm REQUIRED)
 
 add_executable(sora_recv)
-set_target_properties(sora_recv PROPERTIES CXX_STANDARD 17 C_STANDARD 17)
+set_target_properties(sora_recv PROPERTIES CXX_STANDARD 20 C_STANDARD 20)
 set_target_properties(sora_recv PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_sources(sora_recv PRIVATE sora_recv.cpp AudioProcessor.cpp)
 
@@ -42,3 +43,17 @@ target_include_directories(sora_recv PRIVATE ${CLI11_DIR}/include)
 #target_link_libraries(sora_recv PRIVATE Sora::sora SDL2::SDL2 SDL2::SDL2main)
 target_link_libraries(sora_recv PRIVATE Sora::sora)
 target_compile_definitions(sora_recv PRIVATE CLI11_HAS_FILESYSTEM=0)
+
+# Lyra ファイルのコピー
+add_custom_command(
+  TARGET sora_recv POST_BUILD
+  COMMAND
+    ${CMAKE_COMMAND} -E copy_directory
+    ${LYRA_DIR}/share/model_coeffs/
+    ${CMAKE_CURRENT_BINARY_DIR}/model_coeffs/
+  DEPENDS
+    ${LYRA_DIR}/share/model_coeffs/lyra_config.binarypb
+    ${LYRA_DIR}/share/model_coeffs/lyragan.tflite
+    ${LYRA_DIR}/share/model_coeffs/quantizer.tflite
+    ${LYRA_DIR}/share/model_coeffs/soundstream_encoder.tflite
+)

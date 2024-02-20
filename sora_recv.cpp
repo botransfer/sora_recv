@@ -4,7 +4,7 @@
 
 // Sora
 #include <sora/camera_device_capturer.h>
-#include <sora/sora_default_client.h>
+#include <sora/sora_client_context.h>
 
 // CLI11
 #include <CLI/CLI.hpp>
@@ -16,7 +16,7 @@
 
 #include "AudioProcessor.hpp"
 
-struct MomoSampleConfig : sora::SoraDefaultClientConfig {
+struct MomoSampleConfig {
   int fd_out;
   std::string track_id;
   std::string signaling_url;
@@ -27,58 +27,35 @@ struct MomoSampleConfig : sora::SoraDefaultClientConfig {
   bool audio = true;
   std::string video_codec_type;
   std::string audio_codec_type;
-  int video_bit_rate = 0;
-  int audio_bit_rate = 0;
   boost::json::value metadata;
   boost::optional<bool> multistream = true;
-  boost::optional<bool> spotlight;
-  int spotlight_number = 0;
-  boost::optional<bool> simulcast;
-  boost::optional<bool> data_channel_signaling;
-  boost::optional<bool> ignore_disconnect_websocket;
-
-  std::string proxy_url;
-  std::string proxy_username;
-  std::string proxy_password;
 };
 
 class MomoSample : public std::enable_shared_from_this<MomoSample>,
-                   public sora::SoraDefaultClient {
+                   public sora::SoraSignalingObserver {
  public:
-  MomoSample(MomoSampleConfig config)
-      : sora::SoraDefaultClient(config), config_(config) {}
+  MomoSample(std::shared_ptr<sora::SoraClientContext> context,
+             MomoSampleConfig config)
+      : context_(context), config_(config) {}
 
   void Run() {
     audioProcessor_.reset(new AudioProcessor(config_.track_id, config_.fd_out));
     ioc_.reset(new boost::asio::io_context(1));
 
     sora::SoraSignalingConfig config;
-    config.pc_factory = factory();
+    config.pc_factory = context_->peer_connection_factory();
     config.io_context = ioc_.get();
     config.observer = shared_from_this();
     config.signaling_urls.push_back(config_.signaling_url);
     config.channel_id = config_.channel_id;
-    config.role = config_.role;
-    config.multistream = config_.multistream;
     config.client_id = config_.client_id;
+    config.multistream = config_.multistream;
     config.video = config_.video;
     config.audio = config_.audio;
+    config.role = config_.role;
     config.video_codec_type = config_.video_codec_type;
     config.audio_codec_type = config_.audio_codec_type;
-    config.video_bit_rate = config_.video_bit_rate;
-    config.audio_bit_rate = config_.audio_bit_rate;
     config.metadata = config_.metadata;
-    config.spotlight = config_.spotlight;
-    config.spotlight_number = config_.spotlight_number;
-    config.simulcast = config_.simulcast;
-    config.data_channel_signaling = config_.data_channel_signaling;
-    config.ignore_disconnect_websocket = config_.ignore_disconnect_websocket;
-    config.proxy_agent = "Momo Sample for Sora C++ SDK";
-    config.proxy_url = config_.proxy_url;
-    config.proxy_username = config_.proxy_username;
-    config.proxy_password = config_.proxy_password;
-    config.network_manager = connection_context()->default_network_manager();
-    config.socket_factory = connection_context()->default_socket_factory();
     conn_ = sora::SoraSignaling::Create(config);
 
     boost::asio::executor_work_guard<boost::asio::io_context::executor_type>
@@ -105,8 +82,8 @@ class MomoSample : public std::enable_shared_from_this<MomoSample>,
               conn_->GetPeerConnection()->AddTrack(video_track_, {stream_id});
     }
   }
-  void OnDisconnect(sora::SoraSignalingErrorCode ec, std::string message)
-    override {
+  void OnDisconnect(sora::SoraSignalingErrorCode ec,
+                    std::string message) override {
     msgout("Disconnect", message);
     /*
     if (renderer_ != nullptr) {
@@ -115,6 +92,13 @@ class MomoSample : public std::enable_shared_from_this<MomoSample>,
     */
     ioc_->stop();
   }
+  void OnNotify(std::string msg)
+  override {
+    msgout("Notify", msg);
+  }
+
+  void OnPush(std::string text) override {}
+  void OnMessage(std::string label, std::string data) override {}
 
   void OnTrack(rtc::scoped_refptr<webrtc::RtpTransceiverInterface> transceiver)
     override {
@@ -181,10 +165,7 @@ class MomoSample : public std::enable_shared_from_this<MomoSample>,
     }
   }
 
-  void OnNotify(std::string msg)
-  override {
-    msgout("Notify", msg);
-  }
+  void OnDataChannel(std::string label) override {}
 
   void msgout(std::string type, std::string msg)
   {
@@ -192,6 +173,7 @@ class MomoSample : public std::enable_shared_from_this<MomoSample>,
   }
 
  private:
+  std::shared_ptr<sora::SoraClientContext> context_;
   MomoSampleConfig config_;
   rtc::scoped_refptr<webrtc::AudioTrackInterface> audio_track_;
   rtc::scoped_refptr<webrtc::VideoTrackInterface> video_track_;
@@ -259,11 +241,6 @@ main(int argc, char* argv[])
                  "Signaling metadata used in connect message")
       ->check(is_json);
 
-  // proxy の設定
-  app.add_option("--proxy-url", config.proxy_url, "Proxy URL");
-  app.add_option("--proxy-username", config.proxy_username, "Proxy username");
-  app.add_option("--proxy-password", config.proxy_password, "Proxy password");
-
   app.add_option("--track-id", config.track_id, "track id to output data")->required();
 
   try {
@@ -283,7 +260,9 @@ main(int argc, char* argv[])
     rtc::LogMessage::LogThreads();
   }
 
-  auto momosample = sora::CreateSoraClient<MomoSample>(config);
+  auto context =
+      sora::SoraClientContext::Create(sora::SoraClientContextConfig());
+  auto momosample = std::make_shared<MomoSample>(context, config);
   momosample->Run();
 
   return 0;

@@ -5,7 +5,7 @@ import sys
 PROJECT_DIR = os.path.abspath(os.path.dirname(__file__))
 BASE_DIR = os.path.join(PROJECT_DIR, '..')
 sys.path.insert(0, BASE_DIR)
-
+platform_name = 'ubuntu-22.04_x86_64'
 
 from base import (  # noqa
     cd,
@@ -18,6 +18,7 @@ from base import (  # noqa
     install_webrtc,
     install_llvm,
     install_boost,
+    install_lyra,
     install_cmake,
     install_sdl2,
     install_sora,
@@ -35,7 +36,7 @@ def install_deps(source_dir, build_dir, install_dir, debug):
             'version_file': os.path.join(install_dir, 'webrtc.version'),
             'source_dir': source_dir,
             'install_dir': install_dir,
-            'platform': 'ubuntu-20.04_x86_64',
+            'platform': platform_name,
         }
         install_webrtc(**install_webrtc_args)
 
@@ -45,8 +46,8 @@ def install_deps(source_dir, build_dir, install_dir, debug):
         # LLVM
         tools_url = webrtc_version['WEBRTC_SRC_TOOLS_URL']
         tools_commit = webrtc_version['WEBRTC_SRC_TOOLS_COMMIT']
-        libcxx_url = webrtc_version['WEBRTC_SRC_BUILDTOOLS_THIRD_PARTY_LIBCXX_TRUNK_URL']
-        libcxx_commit = webrtc_version['WEBRTC_SRC_BUILDTOOLS_THIRD_PARTY_LIBCXX_TRUNK_COMMIT']
+        libcxx_url = webrtc_version['WEBRTC_SRC_THIRD_PARTY_LIBCXX_SRC_URL']
+        libcxx_commit = webrtc_version['WEBRTC_SRC_THIRD_PARTY_LIBCXX_SRC_COMMIT']
         buildtools_url = webrtc_version['WEBRTC_SRC_BUILDTOOLS_URL']
         buildtools_commit = webrtc_version['WEBRTC_SRC_BUILDTOOLS_COMMIT']
         install_llvm_args = {
@@ -72,7 +73,7 @@ def install_deps(source_dir, build_dir, install_dir, debug):
             'source_dir': source_dir,
             'install_dir': install_dir,
             'sora_version': version['SORA_CPP_SDK_VERSION'],
-            'platform': 'ubuntu-20.04_x86_64',
+            'platform': platform_name,
         }
         install_boost(**install_boost_args)
 
@@ -110,7 +111,7 @@ def install_deps(source_dir, build_dir, install_dir, debug):
             'version_file': os.path.join(install_dir, 'sora.version'),
             'source_dir': source_dir,
             'install_dir': install_dir,
-            'platform': 'ubuntu-20.04_x86_64',
+            'platform': platform_name,
         }
         install_sora(**install_sora_args)
 
@@ -130,7 +131,7 @@ def main():
     args = parser.parse_args()
 
     configuration_dir = 'debug' if args.debug else 'release'
-    dir = 'ubuntu-20.04_x86_64'
+    dir = platform_name
     source_dir = os.path.join(BASE_DIR, '_source', dir, configuration_dir)
     build_dir = os.path.join(BASE_DIR, '_build', dir, configuration_dir)
     install_dir = os.path.join(BASE_DIR, '_install', dir, configuration_dir)
@@ -150,6 +151,7 @@ def main():
         cmake_args = []
         cmake_args.append(f'-DCMAKE_BUILD_TYPE={configuration}')
         cmake_args.append(f"-DBOOST_ROOT={cmake_path(os.path.join(install_dir, 'boost'))}")
+        cmake_args.append(f"-DLYRA_DIR={cmake_path(os.path.join(install_dir, 'lyra'))}")
         cmake_args.append(f"-DWEBRTC_INCLUDE_DIR={cmake_path(webrtc_info.webrtc_include_dir)}")
         cmake_args.append(f"-DWEBRTC_LIBRARY_DIR={cmake_path(webrtc_info.webrtc_library_dir)}")
         cmake_args.append(f"-DSORA_DIR={cmake_path(os.path.join(install_dir, 'sora'))}")
