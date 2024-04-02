@@ -1,10 +1,11 @@
 # sora_recv
 
 [sora-cpp-sdk-samples](https://github.com/shiguredo/sora-cpp-sdk-samples)の
-momo_sample を改造したもの。  
+momo_sample を改造したもの。
 Sora のチャネルにrecvonly で入り、指定されたtrackId のデータをstdout に吐き出す。track が無くなる(クライアントが接続を切るなど）と終了する。現状では音声トラックにのみ対応。対話内容を音声認識にかけるなどの用途で使う。
 
-Ubuntu20のみを抜き出してある。作り方は、sora-cpp-sdk-samples の下に展開し、
+Ubuntu22のみを抜き出してある。
+作り方は、sora-cpp-sdk のexamples/ の下に展開し、
 `python sora_recv/run.py` でコンパイルすると、_build/ の下にバイナリができる。
 
 # usage
