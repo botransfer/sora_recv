@@ -3,6 +3,7 @@ import multiprocessing
 import os
 import sys
 from typing import List, Optional
+import logging
 
 PROJECT_DIR = os.path.abspath(os.path.dirname(__file__))
 BASE_DIR = os.path.join(PROJECT_DIR, "..")
@@ -135,6 +136,15 @@ def install_deps(
 
 
 def main():
+    # output debug log
+    logger = logging.getLogger()
+    logger.setLevel(logging.DEBUG)
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(asctime)s %(name)s %(levelname)s %(message)s')
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
     parser = argparse.ArgumentParser()
     parser.add_argument("--debug", action="store_true")
     add_webrtc_build_arguments(parser)

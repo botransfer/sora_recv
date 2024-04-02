@@ -5,8 +5,17 @@ momo_sample を改造したもの。
 Sora のチャネルにrecvonly で入り、指定されたtrackId のデータをstdout に吐き出す。track が無くなる(クライアントが接続を切るなど）と終了する。現状では音声トラックにのみ対応。対話内容を音声認識にかけるなどの用途で使う。
 
 Ubuntu22のみを抜き出してある。
-作り方は、sora-cpp-sdk のexamples/ の下に展開し、
+
+# 作り方
+`sudo apt install pkg-config libva-dev libdrm-dev libx11-dev libxext-dev`
+
+sora-cpp-sdk のexamples/ でsora_recv をgit clone し、
 `python sora_recv/run.py` でコンパイルすると、_build/ の下にバイナリができる。
+
+
+## 注意
+
+WSLでWindows ファイルシステム上でビルドしようとすると、webrtc のライブラリがWindows Defender などのウィルスチェックに引っかかり、止まるので注意。
 
 # usage
 
