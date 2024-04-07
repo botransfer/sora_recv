@@ -31,7 +31,7 @@ find_package(Libdrm REQUIRED)
 add_executable(sora_recv)
 set_target_properties(sora_recv PROPERTIES CXX_STANDARD 20 C_STANDARD 20)
 set_target_properties(sora_recv PROPERTIES POSITION_INDEPENDENT_CODE ON)
-target_sources(sora_recv PRIVATE sora_recv.cpp AudioProcessor.cpp)
+target_sources(sora_recv PRIVATE sora_recv.cpp Sink.cpp AudioSink.cpp VideoSink.cpp MsgOut.cpp)
 
 target_compile_options(sora_recv
   PRIVATE

@@ -1,83 +1,64 @@
 # sora_recv
 
-[sora-cpp-sdk-samples](https://github.com/shiguredo/sora-cpp-sdk-samples)の
-momo_sample を改造したもの。
-Sora のチャネルにrecvonly で入り、指定されたtrackId のデータをstdout に吐き出す。track が無くなる(クライアントが接続を切るなど）と終了する。現状では音声トラックにのみ対応。対話内容を音声認識にかけるなどの用途で使う。
+[sora-cpp-sdk](https://github.com/shiguredo/sora-cpp-sdk)のmomo_sample を改造したもの。
+Sora のチャネルにrecvonly で入り、audio またはvideo track のデータを出力する。
+顔認識をしたり、音声認識にかけるなどの用途で使う。
 
 Ubuntu22のみを抜き出してある。
 
+# テスト環境
+- Ubuntu 22.04.3 LTS
+- Python 3.10.12
+- sora-cpp-sdk 2024.6.0
+
 # 作り方
-`sudo apt install pkg-config libva-dev libdrm-dev libx11-dev libxext-dev`
 
-sora-cpp-sdk のexamples/ でsora_recv をgit clone し、
-`python sora_recv/run.py` でコンパイルすると、_build/ の下にバイナリができる。
-
+```
+sudo apt install pkg-config libva-dev libdrm-dev libx11-dev libxext-dev
+git clone https://github.com/shiguredo/sora-cpp-sdk.git
+cd sora-cpp-sdk/examples
+git clone https://github.com/botransfer/sora_recv.git
+python sora_recv/run.py
+```
 
 ## 注意
 
-WSLでWindows ファイルシステム上でビルドしようとすると、webrtc のライブラリがWindows Defender などのウィルスチェックに引っかかり、止まるので注意。
+WSLでWindows ファイルシステム上でビルドしようとすると、webrtc のライブラリがWindows Defender などのウィルスチェックに引っかかり、止まるので注意。WSL用のファイルシステム上ならOK。
 
 # usage
 
 ```
-> ./sora_recv --help
-Momo Sample for Sora C++ SDK
-Usage: ./sora_recv [OPTIONS]
+> _build/ubuntu-22.04_x86_64/release/sora_recv/sora_recv --help
+sora receiver
+Usage: _build/ubuntu-22.04_x86_64/release/sora_recv/sora_recv [OPTIONS]
 
 Options:
   -h,--help                   Print this help message and exit
-  --log-level INT:value in {verbose->0,info->1,warning->2,error->3,none->4} OR {0,1,2,3,4}
-                              Log severity level threshold
   --signaling-url TEXT REQUIRED
                               Signaling URL
   --channel-id TEXT REQUIRED  Channel ID
   --client-id TEXT            Client ID
   --metadata TEXT:JSON Value  Signaling metadata used in connect message
-  --proxy-url TEXT            Proxy URL
-  --proxy-username TEXT       Proxy username
-  --proxy-password TEXT       Proxy password
-  --track-id TEXT REQUIRED    track id to output data
 ```
 
+# 入出力
 
-# 音声出力
+基本的にpython script などで使うことを想定。`receiver_test.py` を参照。
+`cb_check_track()` と`cb_data()` を書き換えればいいと思う。重い処理はmutiprocessing を使いましょう。
 
-出力はs16le 48k, 1chのraw フォーマット。
-```
-./sora_recv ... > test.raw
-ffmpeg -f s16le -ar 48k -ac 1 -i test.raw test.wav
-```
+標準出力にSora からのnotify, track, removeTrack などのメッセージが出力されるので、それをみて
+必要なtrack が来たら、（sora_recv の標準入力に）コマンドを送って、named pipe にデータを出させる。
+named pipe はmkdtemp() で作られたディレクトリ内に作成される。
 
-# stderr
+## コマンド
 
-stderr にはもともと(momo_sample) のstdout + stderr の出力が出る(`dup()` している)とともに、AddRemoteStream, NotificationMessage などのイベントに対応したメッセージがJSONで出力される。これらは`sora_recv:` が行頭につくので、それで識別できる。
+- `START <track_id> <named pipe などのパス>`:
+  出力を開始する
+- `STOP <track_id>`:
+  出力を止める。removeTrack がSora から来ると勝手に止まる。
+- `SHUTDOWN`:
+  sora_recv を終了する。python script をCtrl-C で止めるとシグナルが送られるので、勝手に止まる。
 
-以下のような感じで出てくるので、Notification とTrack からclient_id に対応するstream_id, stream_id に対応するtrack_id とkind を見ることで、取り出したいtrack_id を得ることもできる。
-ターゲットのclient_id とkind を指定すると、それに対応するtrack を検出し、その中身を出し続けるようにしてもいいかもしれない。
+# 問題点
 
-```json
-sora_recv: Notify: {"audio":true,"channel_connections":1,"channel_recvonly_connections":1,"channel_sendonly_connections":0,"channel_sendrecv_connections":0,"client_id":"0RNTMZSXJX4K52H4HMS85BB85M","connection_id":"0RNTMZSXJX4K52H4HMS85BB85M","data":[],"event_type":"connection.created","minutes":0,"role":"recvonly","session_id":"EB3A4ER59H6K53KJSVVG2Z4G74","turn_transport_type":"udp","type":"notify","video":true}
-sora_recv: Track: {"id":"DDTG9JT4J97H19THK7F31E9PXC","kind":"audio","streams":["EWFHYP453X6KDFBJGWNGYRZPMM"]}
-
-sora_recv: Track: {"id":"21QQ5S8AF91693YK5CZ2R83STW","kind":"video","streams":["EWFHYP453X6KDFBJGWNGYRZPMM"]}
-
-sora_recv: Notify: {"audio":true,"channel_connections":2,"channel_recvonly_connections":1,"channel_sendonly_connections":0,"channel_sendrecv_connections":1,"client_id":"CLIENT2","connection_id":"EWFHYP453X6KDFBJGWNGYRZPMM","event_type":"connection.created","minutes":0,"role":"sendrecv","session_id":"EB3A4ER59H6K53KJSVVG2Z4G74","turn_transport_type":"udp","type":"notify","video":true}
-sora_recv: Track: {"id":"XV4C2607KD3V59VJ44CS2HZF34","kind":"audio","streams":["52YYX8NKSS2D59A27DF526A3R0"]}
-
-sora_recv: Track: {"id":"4HXNTVGG7S56H36Q00J2WKMCG8","kind":"video","streams":["52YYX8NKSS2D59A27DF526A3R0"]}
-
-sora_recv: Notify: {"audio":true,"channel_connections":3,"channel_recvonly_connections":1,"channel_sendonly_connections":0,"channel_sendrecv_connections":2,"client_id":"CLIENT1","connection_id":"52YYX8NKSS2D59A27DF526A3R0","event_type":"connection.created","minutes":0,"role":"sendrecv","session_id":"EB3A4ER59H6K53KJSVVG2Z4G74","turn_transport_type":"udp","type":"notify","video":true}
-Session Initialization Time: 139 ms
-sora_recv: RemoveTrack: {"id":"DDTG9JT4J97H19THK7F31E9PXC","kind":"audio","streams":""}
-
-sora_recv: RemoveTrack: {"id":"21QQ5S8AF91693YK5CZ2R83STW","kind":"video","streams":""}
-
-sora_recv: Notify: {"audio":true,"channel_connections":2,"channel_recvonly_connections":1,"channel_sendonly_connections":0,"channel_sendrecv_connections":1,"client_id":"CLIENT2","connection_id":"EWFHYP453X6KDFBJGWNGYRZPMM","event_type":"connection.destroyed","minutes":0,"role":"sendrecv","session_id":"EB3A4ER59H6K53KJSVVG2Z4G74","turn_transport_type":"udp","type":"notify","video":true}
-Session Deinitialization Time: 14 ms
-sora_recv: RemoveTrack: {"id":"XV4C2607KD3V59VJ44CS2HZF34","kind":"audio","streams":""}
-
-sora_recv: RemoveTrack: {"id":"4HXNTVGG7S56H36Q00J2WKMCG8","kind":"video","streams":""}
-
-sora_recv: Notify: {"audio":true,"channel_connections":1,"channel_recvonly_connections":1,"channel_sendonly_connections":0,"channel_sendrecv_connections":0,"client_id":"CLIENT1","connection_id":"52YYX8NKSS2D59A27DF526A3R0","event_type":"connection.destroyed","minutes":0,"role":"sendrecv","session_id":"EB3A4ER59H6K53KJSVVG2Z4G74","turn_transport_type":"udp","type":"notify","video":true}
-```
-
+sora-cpp-sdk がメモリリークしているようで、何もしていなくても少しずつメモリ使用量が増えていく。

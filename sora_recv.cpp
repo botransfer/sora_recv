@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <unistd.h>
 #include <sstream>
+#include <stdexcept>
 
 // Sora
 #include <sora/camera_device_capturer.h>
@@ -10,25 +11,26 @@
 #include <CLI/CLI.hpp>
 
 // Boost
+#include <boost/algorithm/string/split.hpp>  
+#include <boost/algorithm/string.hpp>   
 #include <boost/optional/optional.hpp>
 #include <boost/property_tree/ptree.hpp>
-#include "boost/property_tree/json_parser.hpp"
+#include <boost/property_tree/json_parser.hpp>
+namespace posix = boost::asio::posix;
 
-#include "AudioProcessor.hpp"
+#include <rtc_base/synchronization/mutex.h>
+#include "AudioSink.hpp"
+#include "VideoSink.hpp"
+#include "MsgOut.hpp"
+
+typedef std::unique_ptr<Sink> SinkPtr;
+typedef std::vector<SinkPtr> SinkVector;
 
 struct MomoSampleConfig {
-  int fd_out;
-  std::string track_id;
   std::string signaling_url;
   std::string channel_id;
-  std::string role = "recvonly";
   std::string client_id;
-  bool video = true;
-  bool audio = true;
-  std::string video_codec_type;
-  std::string audio_codec_type;
   boost::json::value metadata;
-  boost::optional<bool> multistream = true;
 };
 
 class MomoSample : public std::enable_shared_from_this<MomoSample>,
@@ -36,10 +38,10 @@ class MomoSample : public std::enable_shared_from_this<MomoSample>,
  public:
   MomoSample(std::shared_ptr<sora::SoraClientContext> context,
              MomoSampleConfig config)
-      : context_(context), config_(config) {}
+    : context_(context), config_(config) {}
 
   void Run() {
-    audioProcessor_.reset(new AudioProcessor(config_.track_id, config_.fd_out));
+    // audioProcessor_.reset(new AudioProcessor(config_.track_id, config_.fd_out));
     ioc_.reset(new boost::asio::io_context(1));
 
     sora::SoraSignalingConfig config;
@@ -49,12 +51,10 @@ class MomoSample : public std::enable_shared_from_this<MomoSample>,
     config.signaling_urls.push_back(config_.signaling_url);
     config.channel_id = config_.channel_id;
     config.client_id = config_.client_id;
-    config.multistream = config_.multistream;
-    config.video = config_.video;
-    config.audio = config_.audio;
-    config.role = config_.role;
-    config.video_codec_type = config_.video_codec_type;
-    config.audio_codec_type = config_.audio_codec_type;
+    config.multistream = true;
+    config.video = true;
+    config.audio = true;
+    config.role = "recvonly";
     config.metadata = config_.metadata;
     conn_ = sora::SoraSignaling::Create(config);
 
@@ -63,38 +63,101 @@ class MomoSample : public std::enable_shared_from_this<MomoSample>,
 
     boost::asio::signal_set signals(*ioc_, SIGINT, SIGTERM);
     signals.async_wait(
-        [this](const boost::system::error_code&, int) { conn_->Disconnect(); });
+        [this](const boost::system::error_code&, int) {
+          MsgOut::log("signal received");
+          Stop();
+        });
+
+    // setup stdin and start reading
+    stdin_.reset(new posix::stream_descriptor(*ioc_, STDIN_FILENO));
+    read_stdin();
 
     conn_->Connect();
     ioc_->run();
   }
 
-  void OnSetOffer(std::string offer) override {
-    std::string stream_id = rtc::CreateRandomString(16);
-    if (audio_track_ != nullptr) {
-      webrtc::RTCErrorOr<rtc::scoped_refptr<webrtc::RtpSenderInterface>>
-          audio_result =
-              conn_->GetPeerConnection()->AddTrack(audio_track_, {stream_id});
+  void Stop() {
+    MsgOut::log("shutting down");
+    webrtc::MutexLock lock(&sinks_lock);
+    sinks.clear();
+    conn_->Disconnect();
+  }
+
+  void read_stdin() {
+    boost::asio::async_read_until(*stdin_, in_streambuf_, '\n', 
+                                  [this](const boost::system::error_code& error, std::size_t bytes_transferred) {
+                                    std::string msg;
+                                    if (! error) {
+                                      in_streambuf_.sgetn(inbuf_, bytes_transferred);
+                                      inbuf_[bytes_transferred - 1] = '\0';
+                                      msg = std::string(inbuf_);
+                                    }
+                                    OnStdin(error, msg);
+                                  });
+
+  }
+
+  void OnStdin(const boost::system::error_code& error, std::string msg){
+    if (error) {
+      MsgOut::err("reading from stdin failed: " + error.message());
+      conn_->Disconnect();
     }
-    if (video_track_ != nullptr) {
-      webrtc::RTCErrorOr<rtc::scoped_refptr<webrtc::RtpSenderInterface>>
-          video_result =
-              conn_->GetPeerConnection()->AddTrack(video_track_, {stream_id});
+    else {
+      MsgOut::log("stdin:" + msg);
+
+      // parse input command
+      while (1) { // use while to allow "break"
+        std::vector<std::string> tokens;
+        boost::algorithm::split(tokens, msg, boost::algorithm::is_space(), boost::token_compress_on);
+        if (tokens[0] == "START"){
+          if (tokens.size() < 3) {
+            MsgOut::err("usage: START <track_id> <output path>");
+            break;
+          }
+          try {
+            auto& sink = getSink(tokens[1]);
+            sink->start(tokens[2]);
+          }
+          catch (...) {
+            MsgOut::err("no sink found for " + tokens[1]);
+          }
+        }
+        else if (tokens[0] == "STOP"){
+          if (tokens.size() < 2) {
+            MsgOut::err("usage: STOP <track_id>");
+            break;
+          }
+          try {
+            auto& sink = getSink(tokens[1]);
+            sink->stop();
+          }
+          catch (...) {
+            MsgOut::err("no sink found for " + tokens[1]);
+          }
+        }
+        else if (tokens[0] == "SHUTDOWN") {
+          Stop();
+        }
+
+        break;
+      }
+
+      read_stdin(); // keep reading
     }
   }
+
+  void OnSetOffer(std::string offer) override {
+  }
+
   void OnDisconnect(sora::SoraSignalingErrorCode ec,
                     std::string message) override {
-    msgout("Disconnect", message);
-    /*
-    if (renderer_ != nullptr) {
-      renderer_.reset();
-    }
-    */
+    MsgOut::log(message);
     ioc_->stop();
   }
+
   void OnNotify(std::string msg)
   override {
-    msgout("Notify", msg);
+    MsgOut::send("notify", msg);
   }
 
   void OnPush(std::string text) override {}
@@ -119,23 +182,35 @@ class MomoSample : public std::enable_shared_from_this<MomoSample>,
     node_root.add_child("streams", node_streams);
     std::stringstream ss;
     boost::property_tree::write_json(ss, node_root, false);
-    msgout("Track", ss.str());
+    MsgOut::send("addTrack", ss.str());
     
+    // create Sink and add to list
+    Sink* sink_raw = NULL;
     if (track->kind() == webrtc::MediaStreamTrackInterface::kVideoKind) {
-      /*
-      renderer_->AddTrack(
-          static_cast<webrtc::VideoTrackInterface*>(track.get()));
-      */
+      sink_raw = new VideoSink(track.get());
     }
     else if (track->kind() == webrtc::MediaStreamTrackInterface::kAudioKind) {
-      audioProcessor_->addTrack(
-          static_cast<webrtc::AudioTrackInterface*>(track.get()));
+      sink_raw = new AudioSink(track.get());
+    }
+    if (sink_raw != NULL) {
+      SinkPtr sink(sink_raw);
+      webrtc::MutexLock lock(&sinks_lock);
+      sinks.push_back(std::move(sink));
     }
   }
 
   void OnRemoveTrack(rtc::scoped_refptr<webrtc::RtpReceiverInterface> receiver)
     override {
     auto track = receiver->track();
+
+    {
+      webrtc::MutexLock lock(&sinks_lock);
+      auto itr_end = std::remove_if(sinks.begin(), sinks.end(),
+                                    [track](const SinkPtr& sink) {
+                                      return sink->track == track;
+                                    });
+      sinks.erase(itr_end, sinks.end());
+    }
 
     // output message
     boost::property_tree::ptree node_root;
@@ -151,35 +226,34 @@ class MomoSample : public std::enable_shared_from_this<MomoSample>,
     node_root.add_child("streams", node_streams);
     std::stringstream ss;
     boost::property_tree::write_json(ss, node_root, false);
-    msgout("RemoveTrack", ss.str());
-
-    if (track->kind() == webrtc::MediaStreamTrackInterface::kVideoKind) {
-      /*
-      renderer_->RemoveTrack(
-          static_cast<webrtc::VideoTrackInterface*>(track.get()));
-      */
-    }
-    else if (track->kind() == webrtc::MediaStreamTrackInterface::kAudioKind) {
-      audioProcessor_->removeTrack(
-          static_cast<webrtc::AudioTrackInterface*>(track.get()));
-    }
+    MsgOut::send("removeTrack", ss.str());
   }
 
   void OnDataChannel(std::string label) override {}
 
-  void msgout(std::string type, std::string msg)
+  const SinkPtr&
+  getSink(std::string id)
   {
-    fprintf(stderr, "sora_recv: %s: %s\n", type.c_str(), msg.c_str());
+    auto const& it = std::find_if(sinks.begin(), sinks.end(),
+                           [id](const SinkPtr& sink) {
+                             return sink->track_id == id;
+                           });
+    if (it == sinks.end()) throw id;
+    return *it;
   }
 
  private:
   std::shared_ptr<sora::SoraClientContext> context_;
   MomoSampleConfig config_;
-  rtc::scoped_refptr<webrtc::AudioTrackInterface> audio_track_;
-  rtc::scoped_refptr<webrtc::VideoTrackInterface> video_track_;
   std::shared_ptr<sora::SoraSignaling> conn_;
   std::unique_ptr<boost::asio::io_context> ioc_;
-  std::unique_ptr<AudioProcessor> audioProcessor_;
+  std::unique_ptr<posix::stream_descriptor> stdin_;
+  std::unique_ptr<posix::stream_descriptor> stdout_;
+  boost::asio::streambuf in_streambuf_;
+  char inbuf_[1024];
+
+  webrtc::Mutex sinks_lock;
+  SinkVector sinks;
 };
 
 void add_optional_bool(CLI::App& app,
@@ -205,12 +279,8 @@ void add_optional_bool(CLI::App& app,
 int
 main(int argc, char* argv[])
 {
-  MomoSampleConfig config;
-
-  // redirect library output to stderr
-  fflush(stdout);
-  config.fd_out = dup(1);
-  dup2(2, 1);
+  // send error outputs to stdout, so that python script can capture them
+  dup2(STDOUT_FILENO, STDERR_FILENO);
 
   auto is_json = CLI::Validator(
       [](std::string input) -> std::string {
@@ -223,41 +293,22 @@ main(int argc, char* argv[])
       },
       "JSON Value");
 
-  CLI::App app("Momo Sample for Sora C++ SDK");
-
-  int log_level = (int)rtc::LS_ERROR;
-  auto log_level_map = std::vector<std::pair<std::string, int>>(
-      {{"verbose", 0}, {"info", 1}, {"warning", 2}, {"error", 3}, {"none", 4}});
-  app.add_option("--log-level", log_level, "Log severity level threshold")
-      ->transform(CLI::CheckedTransformer(log_level_map, CLI::ignore_case));
-
-  // Sora に関するオプション
+  CLI::App app("sora receiver");
+  MomoSampleConfig config;
   app.add_option("--signaling-url", config.signaling_url, "Signaling URL")->required();
   app.add_option("--channel-id", config.channel_id, "Channel ID")->required();
   app.add_option("--client-id", config.client_id, "Client ID");
-
   std::string metadata;
-  app.add_option("--metadata", metadata,
-                 "Signaling metadata used in connect message")
-      ->check(is_json);
-
-  app.add_option("--track-id", config.track_id, "track id to output data")->required();
-
+  app.add_option("--metadata", metadata, "Signaling metadata used in connect message")
+    ->check(is_json);
   try {
     app.parse(argc, argv);
   } catch (const CLI::ParseError& e) {
     exit(app.exit(e));
   }
-
-  // メタデータのパース
+  boost::json::value metadata_json;
   if (!metadata.empty()) {
     config.metadata = boost::json::parse(metadata);
-  }
-
-  if (log_level != rtc::LS_NONE) {
-    rtc::LogMessage::LogToDebug((rtc::LoggingSeverity)log_level);
-    rtc::LogMessage::LogTimestamps();
-    rtc::LogMessage::LogThreads();
   }
 
   auto context =
