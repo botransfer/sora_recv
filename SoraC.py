@@ -45,19 +45,20 @@ class Sink:
         header = os.read(fifo, struct.calcsize("I"))
         if len(header) < 1:
             return None
-        len_expected = struct.unpack("!I", header)[0]
+        len_remaining = struct.unpack("!I", header)[0]
 
         # read data
         data = None
-        while data is None or len(data) < len_expected:
+        while len_remaining > 0:
             res = select.select([fifo],[],[])
-            data_part = os.read(fifo, 65536)
+            data_part = os.read(fifo, len_remaining)
             if len(data_part) < 1:
-                return -1, None
+                return None
             if data is None:
                 data = data_part
             else:
                 data += data_part
+            len_remaining -= len(data_part)
         return data
 
     def reader(self):
