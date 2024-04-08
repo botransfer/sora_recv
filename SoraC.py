@@ -3,7 +3,11 @@ import threading, subprocess, uuid
 import json
 import tempfile, select
 import struct, socket
-import asyncio
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except:
+    print('WARNING: python-dotenv not found')
 
 class Sink:
     def __init__(self, tempdir, connection_id, track_id, track_kind, client_id, cb_data):
@@ -26,6 +30,7 @@ class Sink:
     # data info
     def set_datainfo(self, info):
         self.datainfo = info
+        self.logger.info('datainfo: ' + json.dumps(info))
 
     def get_path_fifo(self):
         return self.path_fifo
@@ -34,10 +39,6 @@ class Sink:
         if not self.running: return
         with open(self.path_fifo, 'w') as fifo:
             pass
-
-    # data info
-    def set_datainfo(self, info):
-        self.datainfo = info
 
     def read_fifo(self, fifo):
         # read header
@@ -75,10 +76,16 @@ class Sink:
         self.logger.debug('reader stopped')
 
 class SoraC:
-    def __init__(self, cb_check_track, cb_data):
+    def __init__(self,
+                 cb_check_track, cb_data,
+                 channel_id,
+                 signaling_url,
+                 metadata,
+                 prog_path,
+                 ):
         self.cb_check_track = cb_check_track
         self.cb_data = cb_data
-        self.client_id = 'sora_recv/' + str(uuid.uuid4()) # random client ID
+        self.client_id = 'sora_recv/' + str(uuid.uuid4())
         self.map_client_id = dict()
         self.map_track_id = dict()
         self.map_sink = dict()
@@ -86,11 +93,11 @@ class SoraC:
         self.logger = logging.getLogger(self.__class__.__name__)
         
         proc_args = [
-            '_build/ubuntu-22.04_x86_64/release/sora_recv/sora_recv',
-            '--signaling-url', 'wss://sora2.botransfer.org/signaling',
+            prog_path,
+            '--signaling-url', signaling_url,
             '--client-id', self.client_id,
-            '--channel-id', 'r/19',
-            '--metadata', '{"signaling_key": "Xpf2SnOkqLo4htyA7jQEuvhqNEMUD34wGlu8SPYodvC74l3M"}',
+            '--channel-id', channel_id,
+            '--metadata', metadata,
         ]
         self.process = subprocess.Popen(proc_args,
                                    stdout=subprocess.PIPE,
