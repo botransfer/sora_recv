@@ -42,6 +42,12 @@ def cb_data(client_id, track_kind, data, datainfo):
         number_of_frames = datainfo['number_of_frames']
         # do something with audio data
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except:
+    print('WARNING: python-dotenv not found')
+
 if __name__ == '__main__':
     # show all logs on console
     root = logging.getLogger()

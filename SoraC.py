@@ -3,11 +3,6 @@ import threading, subprocess, uuid
 import json
 import tempfile, select
 import struct, socket
-try:
-    from dotenv import load_dotenv
-    load_dotenv()
-except:
-    print('WARNING: python-dotenv not found')
 
 class Sink:
     def __init__(self, tempdir, connection_id, track_id, track_kind, client_id, cb_data):
